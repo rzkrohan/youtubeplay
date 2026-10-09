@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Play Music</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M10 8.5v7l6-3.5z" fill="#fff"/></svg>
+      <span>YouTube <b>Play Music</b></span>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-home" class="view active">
+      <h2 class="section-title">Rekomendasi Lagu</h2>
+      <div id="home-content"></div>
+    </section>
+
+    <section id="view-search" class="view">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <input id="search-input" type="search" placeholder="Cari lagu, artis, atau album" autocomplete="off">
+      </div>
+      <div id="search-results"></div>
+    </section>
+  </main>
+
+  <div id="player" class="player" hidden>
+    <div class="progress" id="p-progress"><div id="p-bar"></div></div>
+    <img id="p-thumb" alt="">
+    <div class="p-info">
+      <span id="p-title" class="ttl"></span>
+      <span id="p-artist" class="sub"></span>
+    </div>
+    <button id="p-prev" class="ctrl" aria-label="Sebelumnya">
+      <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+    </button>
+    <button id="p-toggle" class="ctrl main" aria-label="Putar"></button>
+    <button id="p-next" class="ctrl" aria-label="Berikutnya">
+      <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+    </button>
+  </div>
+
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-view="home">
+      <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+      <span>Home</span>
+    </button>
+    <button class="nav-item" data-view="search">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+      <span>Search</span>
+    </button>
+  </nav>
+
+  <audio id="audio"></audio>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const audio = $("#audio");
+    const store = {};            // daftar lagu per kunci (home0, home1, search, ...)
+    let queue = [];
+    let current = -1;
+
+    const ICON = {
+      play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+      pause: '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'
+    };
+
+    const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+
+    async function getJSON(url) {
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Permintaan gagal");
+      return data;
+    }
+
+    // ---------- Render ----------
+    const card = (t, key, i) => `
+      <button class="card" data-key="${key}" data-index="${i}">
+        <img src="${esc(t.thumbnail)}" alt="">
+        <span class="ttl">${esc(t.title)}</span>
+        <span class="sub">${esc(t.artist)}</span>
+      </button>`;
+
+    const row = (t, key, i) => `
+      <button class="trow" data-key="${key}" data-index="${i}">
+        <img src="${esc(t.thumbnail)}" alt="">
+        <div class="meta">
+          <span class="ttl">${esc(t.title)}</span>
+          <span class="sub">${esc(t.artist)}</span>
+        </div>
+        <span class="dur">${esc(t.duration)}</span>
+      </button>`;
+
+    async function loadHome() {
+      const box = $("#home-content");
+      box.innerHTML = '<p class="muted">Memuat rekomendasi...</p>';
+      try {
+        const groups = await getJSON("/api/YouTube?action=home");
+        box.innerHTML = groups.map((g, gi) => {
+          const key = "home" + gi;
+          store[key] = g.items;
+          return `
+            <div class="row-block">
+              <h3>${esc(g.label)}</h3>
+              <div class="row">${g.items.map((t, i) => card(t, key, i)).join("")}</div>
+            </div>`;
+        }).join("");
+      } catch (err) {
+        box.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+      }
+    }
+
+    let searchTimer;
+    $("#search-input").addEventListener("input", (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => doSearch(e.target.value), 500);
+    });
+
+    async function doSearch(q) {
+      const box = $("#search-results");
+      if (!q.trim()) { box.innerHTML = ""; return; }
+      box.innerHTML = '<p class="muted">Mencari...</p>';
+      try {
+        const items = await getJSON(`/api/YouTube?action=search&q=${encodeURIComponent(q)}`);
+        store.search = items;
+        box.innerHTML = items.length
+          ? items.map((t, i) => row(t, "search", i)).join("")
+          : '<p class="muted">Tidak ada hasil.</p>';
+      } catch (err) {
+        box.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+      }
+    }
+
+    // ---------- Player ----------
+    document.addEventListener("click", (e) => {
+      const el = e.target.closest("[data-key]");
+      if (el) playTrack(store[el.dataset.key], Number(el.dataset.index));
+    });
+
+    async function playTrack(list, index) {
+      if (!list || !list[index]) return;
+      queue = list;
+      current = index;
+      const t = list[index];
+
+      $("#player").hidden = false;
+      $("#p-thumb").src = t.thumbnail;
+      $("#p-title").textContent = t.title;
+      $("#p-artist").textContent = "Memuat audio...";
+
+      try {
+        const data = await getJSON(`/api/YouTube?action=audio&id=${encodeURIComponent(t.id)}`);
+        audio.src = data.download;
+        await audio.play();
+        $("#p-artist").textContent = t.artist;
+      } catch (err) {
+        $("#p-artist").textContent = err.message || "Gagal memutar";
+      }
+    }
+
+    const nextTrack = () => current + 1 < queue.length && playTrack(queue, current + 1);
+    const prevTrack = () => current > 0 && playTrack(queue, current - 1);
+
+    $("#p-next").onclick = nextTrack;
+    $("#p-prev").onclick = prevTrack;
+    $("#p-toggle").onclick = () => (audio.paused ? audio.play() : audio.pause());
+
+    audio.onplay = audio.onpause = () => {
+      $("#p-toggle").innerHTML = audio.paused ? ICON.play : ICON.pause;
+    };
+    audio.onended = nextTrack;
+    audio.ontimeupdate = () => {
+      if (audio.duration) $("#p-bar").style.width = (audio.currentTime / audio.duration) * 100 + "%";
+    };
+
+    $("#p-progress").addEventListener("click", (e) => {
+      if (!audio.duration) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+    });
+
+    // ---------- Bottom navigation ----------
+    document.querySelectorAll(".nav-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b === btn));
+        document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + btn.dataset.view));
+        if (btn.dataset.view === "search") $("#search-input").focus();
+      });
+    });
+
+    $("#p-toggle").innerHTML = ICON.play;
+    loadHome();
+  </script>
+</body>
+</html>

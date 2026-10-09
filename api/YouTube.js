@@ -56,8 +56,18 @@ const cache = new Map();
 async function getAudio(id) {
   if (cache.has(id)) return cache.get(id);
 
-  const r = await ytmp3(`https://www.youtube.com/watch?v=${id}`);
-  if (!r || !r.download) throw new Error("Gagal mengambil audio.");
+  let r;
+  try {
+    r = await ytmp3(`https://youtu.be/${id}`);
+  } catch (err) {
+    console.error("ytmp3 error:", err);
+    throw new Error("Gagal mengambil audio: " + (err?.message || String(err)));
+  }
+
+  console.log("ytmp3 result:", JSON.stringify(r));
+  if (!r || !r.download) {
+    throw new Error("Gagal mengambil audio. Respons: " + JSON.stringify(r));
+  }
 
   const data = { title: r.title, duration: r.duration, download: r.download };
   cache.set(id, data);
